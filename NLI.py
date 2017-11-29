@@ -1,6 +1,7 @@
 """Natural Language Entailment using https://aclweb.org/anthology/D16-1244."""
 
-# [ -Imports ]
+# [ Imports ]
+# [ -Python ]
 import os
 import json
 import pickle
@@ -10,53 +11,11 @@ from collections import Counter
 # [ -Third Party ]
 from sklearn.utils import shuffle
 import dynet as dy
+# [ -Project ]
+from utils import Vocab, read
 
 
 logging.basicConfig(level=logging.INFO)
-
-
-class Vocab:
-    def __init__(self, corpus, label=False):
-        self.counts = Counter()
-        for word in corpus:
-            self.counts[word] += 1
-        self.word_to_idx = {w: i for i, (w, _) in enumerate(self.counts.most_common())}
-        if not label:
-            self.word_to_idx['<UNK>'] = len(self.word_to_idx)
-
-    def __len__(self):
-        return len(self.word_to_idx)
-
-    def get(self, word):
-        if word in self.word_to_idx:
-            return self.word_to_idx[word]
-        else:
-            return self.word_to_idx['<UNK>']
-
-
-def read(filename, length):
-    sentence1 = []
-    sentence2 = []
-    labels = []
-    i = 0
-    with open(filename) as f:
-        for line in f:
-            example = json.loads(line)
-            i += 1
-            if example['gold_label'] == "-":
-                continue
-            print(example['sentence1'])
-            print(example['sentence2'])
-            print(example['sentence1_parse'])
-            print(example['sentence2_parse'])
-            exit()
-            sentence1.append(['<NULL>'] + word_tokenize(example['sentence1'].lower()))
-            sentence2.append(['<NULL>'] + word_tokenize(example['sentence2'].lower()))
-            labels.append(example['gold_label'])
-            if i % 100 == 0:
-                print("\x1b[2K\r{}/{}".format(i, length), end="")
-    print()
-    return sentence1, sentence2, labels
 
 
 train_data = "snli_1.0/snli_1.0_train.jsonl"
@@ -70,6 +29,8 @@ if not os.path.exists("cache"):
     test_sentence1, test_sentence2, test_labels = read(test_data, 10000)
     raw_data = chain(*train_sentence1, *train_sentence2)
     vocab = Vocab(raw_data)
+    if not os.path.exists("cache"):
+        os.makedirs("cache")
     pickle.dump(vocab, open("cache/vocab.p", "wb"))
     pickle.dump([train_sentence1, train_sentence2, train_labels], open("cache/train.p", "wb"))
     pickle.dump([test_sentence1, test_sentence2, test_labels], open("cache/test.p", "wb"))
@@ -87,7 +48,7 @@ vocab_size = len(vocab)
 logging.info("Vocab size: " + str(vocab_size))
 num_classes = len(label_vocab)
 logging.info("Number of Classes: " + str(num_classes))
-embedding_size = 100
+embedding_size = 300
 logging.info("Embedding size: " + str(embedding_size))
 layer_size = 200
 logging.info("Layer Size: " + str(layer_size))
@@ -102,15 +63,21 @@ transform_b1 = model.add_parameters(layer_size)
 transform_w2 = model.add_parameters((layer_size, layer_size))
 transform_b2 = model.add_parameters(layer_size)
 
-pair_w1 = model.add_parameters((layer_size, layer_size * 2))
-pair_b1 = model.add_parameters(layer_size)
-pair_w2 = model.add_parameters((layer_size, layer_size))
-pair_b2 = model.add_parameters(layer_size)
+combine_w1 = model.add_parameters((layer_size, layer_size * 2))
+combine_b1 = model.add_parameters(layer_size)
+combine_w2 = model.add_parameters((layer_size, layer_size))
+combine_b2 = model.add_parameters(layer_size)
 
 decide_w1 = model.add_parameters((layer_size, layer_size * 2))
 decide_b1 = model.add_parameters(layer_size)
 decide_w2 = model.add_parameters((num_classes, layer_size))
 decide_b2 = model.add_parameters(num_classes)
+
+
+def embed(sentence):
+    sentence_embedded = [EMBEDDING_MATRIX[vocab[w]] for w in sentence]
+    sentence_embedded = dy.concatenate(sentence_embedded, d=1)
+    return sentence_embedded
 
 
 def transform(sentence):
@@ -120,19 +87,21 @@ def transform(sentence):
     b2 = dy.parameter(transform_b2)
 
     sentence_transformed = dy.colwise_add(w1 * sentence, b1)
+    sentence_transformed = dy.rectify(sentence_transformed)
     sentence_transformed = dy.colwise_add(w2 * sentence_transformed, b2)
+    sentence_transformed = dy.rectify(sentence_transformed)
 
     return sentence_transformed
 
 
-def decomposable_attention(sentence_a, sentence_b):
+def attend(sentence_a, sentence_b):
     similarity_scores = dy.transpose(sentence_a) * sentence_b
-    logging.info("Similarity Matrix size: " + str(similarity_scores.dim()))
+    logging.debug("Similarity Matrix size: " + str(similarity_scores.dim()))
 
     sentence_a_softmax = dy.softmax(similarity_scores)
-    logging.info("Sentence a softmax size: " + str(sentence_a_softmax.dim()))
+    logging.debug("Sentence a softmax size: " + str(sentence_a_softmax.dim()))
     sentence_b_softmax = dy.softmax(dy.transpose(similarity_scores))
-    logging.info("Sentence b softmax size: " + str(sentence_b_softmax.dim()))
+    logging.debug("Sentence b softmax size: " + str(sentence_b_softmax.dim()))
 
     sentence_b_attended = sentence_b * dy.transpose(sentence_a_softmax)
     sentence_a_attended = sentence_a * dy.transpose(sentence_b_softmax)
@@ -140,33 +109,41 @@ def decomposable_attention(sentence_a, sentence_b):
     return sentence_a_attended, sentence_b_attended
 
 
-def pair(sentence, sentence_other_attended):
-    w1 = dy.parameter(pair_w1)
-    b1 = dy.parameter(pair_b1)
-    w2 = dy.parameter(pair_w2)
-    b2 = dy.parameter(pair_b2)
+def combine(sentence, sentence_other_attended):
+    w1 = dy.parameter(combine_w1)
+    b1 = dy.parameter(combine_b1)
+    w2 = dy.parameter(combine_w2)
+    b2 = dy.parameter(combine_b2)
 
-    sentence_pair = dy.concatenate(
+    sentence_combine = dy.concatenate(
         [sentence, sentence_other_attended], d=0
     )
-    logging.info("Sentence paired with Attended shape: " + str(sentence_pair.dim()))
+    logging.debug("Sentence combineed with Attended shape: " + str(sentence_combine.dim()))
 
-    pair_transformed = dy.colwise_add(w1 * sentence_pair, b1)
-    pair_transformed = dy.colwise_add(w2 * pair_transformed, b2)
+    combine_transformed = dy.colwise_add(w1 * sentence_combine, b1)
+    combine_transformed = dy.rectify(combine_transformed)
+    combine_transformed = dy.colwise_add(w2 * combine_transformed, b2)
+    combine_transformed = dy.rectify(combine_transformed)
 
-    return pair_transformed
+    return combine_transformed
 
 
-def decide(sentence_a, sentence_b):
+def aggregate(sentence_a, sentence_b):
     w1 = dy.parameter(decide_w1)
     b1 = dy.parameter(decide_b1)
     w2 = dy.parameter(decide_w2)
     b2 = dy.parameter(decide_b2)
 
+    sentence_a = dy.sum_dim(sentence_a, [1])
+    logging.debug("Sentence a reduction shape: " + str(sentence_a.dim()))
+    sentence_b = dy.sum_dim(sentence_b, [1])
+    logging.debug("Sentence b reduction shape: " + str(sentence_b.dim()))
+
     combined = dy.concatenate([sentence_a, sentence_b])
-    logging.info("Combined representations shape: " + str(combined.dim()))
+    logging.debug("Combined representations shape: " + str(combined.dim()))
 
     x = (w1 * combined) + b1
+    x = dy.rectify(x)
     logits = (w2 * x) + b2
 
     return logits
@@ -174,43 +151,36 @@ def decide(sentence_a, sentence_b):
 
 def calc_loss(sentence_a, sentence_b, label):
 
-    logging.info("la: " + str(len(sentence1)))
-    logging.info("lb: " + str(len(sentence2)))
+    logging.debug("la: " + str(len(sentence1)))
+    logging.debug("lb: " + str(len(sentence2)))
 
-    sentence_a_embedded = [EMBEDDING_MATRIX[vocab.get(w)] for w in sentence_a]
-    sentence_a_embedded = dy.concatenate(sentence_a_embedded, d=1)
-    logging.info("Sentence a embedded shape: " + str(sentence_a_embedded.dim()))
+    sentence_a_embedded = embed(sentence_a)
+    logging.debug("Sentence a embedded shape: " + str(sentence_a_embedded.dim()))
 
-    sentence_b_embedded = [EMBEDDING_MATRIX[vocab.get(w)] for w in sentence_b]
-    sentence_b_embedded = dy.concatenate(sentence_b_embedded, d=1)
-    logging.info("Sentence b embedded shape: " + str(sentence_b_embedded.dim()))
+    sentence_b_embedded = embed(sentence_b)
+    logging.debug("Sentence b embedded shape: " + str(sentence_b_embedded.dim()))
 
     sentence_a_transformed = transform(sentence_a_embedded)
-    logging.info("Sentence a transformed shape: " + str(sentence_a_transformed.dim()))
+    logging.debug("Sentence a transformed shape: " + str(sentence_a_transformed.dim()))
     sentence_b_transformed = transform(sentence_b_embedded)
-    logging.info("Sentence b transformed shape: " + str(sentence_b_transformed.dim()))
+    logging.debug("Sentence b transformed shape: " + str(sentence_b_transformed.dim()))
 
-    sentence_a_attended, sentence_b_attended = decomposable_attention(
+    sentence_a_attended, sentence_b_attended = attend(
         sentence_a_transformed,
         sentence_b_transformed
     )
-    logging.info("Sentence a attended shape: " + str(sentence_a_attended.dim()))
-    logging.info("Sentence b attended shape: " + str(sentence_b_attended.dim()))
+    logging.debug("Sentence a attended shape: " + str(sentence_a_attended.dim()))
+    logging.debug("Sentence b attended shape: " + str(sentence_b_attended.dim()))
 
-    sentence_a_pair = pair(sentence_a_transformed, sentence_b_attended)
-    sentence_b_pair = pair(sentence_b_transformed, sentence_a_attended)
-    logging.info("Sentence and attention transformed shape: " + str(sentence_a_pair.dim()))
-    logging.info("Sentence and attention transformed shape: " + str(sentence_b_pair.dim()))
+    sentence_a_combine = combine(sentence_a_transformed, sentence_b_attended)
+    sentence_b_combine = combine(sentence_b_transformed, sentence_a_attended)
+    logging.debug("Sentence and attention transformed shape: " + str(sentence_a_combine.dim()))
+    logging.debug("Sentence and attention transformed shape: " + str(sentence_b_combine.dim()))
 
-    sentence_a = dy.sum_dim(sentence_a_pair, [1])
-    logging.info("Sentence a reduction shape: " + str(sentence_a.dim()))
-    sentence_b = dy.sum_dim(sentence_b_pair, [1])
-    logging.info("Sentence b reduction shape: " + str(sentence_b.dim()))
+    logits = aggregate(sentence_a_combine, sentence_b_combine)
+    logging.debug("Logits shape: " + str(logits.dim()))
 
-    logits = decide(sentence_a, sentence_b)
-    logging.info("Logits shape: " + str(logits.dim()))
-
-    encoded_label = label_vocab.get(label)
+    encoded_label = label_vocab[label]
 
     loss = dy.pickneglogsoftmax(logits, encoded_label)
     return loss
@@ -220,7 +190,7 @@ if __name__ == "__main__":
     num_epochs = 5
     train_sentences = 0
     train_loss = 0
-    batch_size = 64
+    batch_size = 16
     for epoch in range(num_epochs):
         train_sentence1, train_sentence2, train_labels = shuffle(
             train_sentence1,
@@ -238,7 +208,6 @@ if __name__ == "__main__":
             for sentence1, sentence2, label in zip(sent1_batch, sent2_batch, label_batch):
                 loss_exp = calc_loss(sentence1, sentence2, label)
                 losses.append(loss_exp)
-
             batch_loss = dy.esum(losses) / batch_size
             train_loss += batch_loss.scalar_value()
             batch_loss.backward()
