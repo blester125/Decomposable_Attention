@@ -6,6 +6,7 @@ import os
 import json
 import pickle
 import logging
+import argparse
 from itertools import chain
 from collections import Counter
 # [ -Third Party ]
@@ -118,7 +119,7 @@ def combine(sentence, sentence_other_attended):
     sentence_combine = dy.concatenate(
         [sentence, sentence_other_attended], d=0
     )
-    logging.debug("Sentence combineed with Attended shape: " + str(sentence_combine.dim()))
+    logging.debug("Sentence combined with Attended shape: " + str(sentence_combine.dim()))
 
     combine_transformed = dy.colwise_add(w1 * sentence_combine, b1)
     combine_transformed = dy.rectify(combine_transformed)
@@ -186,7 +187,21 @@ def calc_loss(sentence_a, sentence_b, label):
     return loss
 
 
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--no_cache", "-n", dest="no_cache", action="store_true")
+    parser.add_argument("--batch_size", "-b", dest="batch_size", type=int, default=16)
+    parser.add_argument("--epochs", "-e", dest="num_epochs", type=int, default=5)
+    parser.add_argument("--embedding", "-v", dest="embedding_size", type=int, default=300)
+    parser.add_argument("--layer_size", "-l", dest="layer_size", type=int, default=200)
+    args = parser.parse_args()
+    print(args)
+    return args
+
+
 if __name__ == "__main__":
+    args = parse_args()
+    exit()
     num_epochs = 5
     train_sentences = 0
     train_loss = 0
