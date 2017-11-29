@@ -6,24 +6,24 @@ import os
 import json
 import pickle
 import logging
-import argparse
 from itertools import chain
 from collections import Counter
 # [ -Third Party ]
 from sklearn.utils import shuffle
 import dynet as dy
 # [ -Project ]
-from utils import Vocab, read
+from utils import Vocab, read, parse_args
 
 
-logging.basicConfig(level=logging.INFO)
+args = parse_args()
 
+logging.basicConfig(level=args.log_level)
 
 train_data = "snli_1.0/snli_1.0_train.jsonl"
 dev_data = "snli_1.0/snli_1.0_dev.jsonl"
 test_data = "snli_1.0/snli_1.0_test.jsonl"
 
-if not os.path.exists("cache"):
+if args.no_cache or not os.path.exists("cache"):
     logging.info("Cache not found, reprocessing data.")
     train_sentence1, train_sentence2, train_labels = read(train_data, 550152)
     dev_sentence1, dev_sentence2, dev_labels = read(dev_data, 10000)
@@ -49,9 +49,9 @@ vocab_size = len(vocab)
 logging.info("Vocab size: " + str(vocab_size))
 num_classes = len(label_vocab)
 logging.info("Number of Classes: " + str(num_classes))
-embedding_size = 300
+embedding_size = args.embedding_size
 logging.info("Embedding size: " + str(embedding_size))
-layer_size = 200
+layer_size = args.layer_size
 logging.info("Layer Size: " + str(layer_size))
 
 model = dy.ParameterCollection()
@@ -187,25 +187,11 @@ def calc_loss(sentence_a, sentence_b, label):
     return loss
 
 
-def parse_args():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--no_cache", "-n", dest="no_cache", action="store_true")
-    parser.add_argument("--batch_size", "-b", dest="batch_size", type=int, default=16)
-    parser.add_argument("--epochs", "-e", dest="num_epochs", type=int, default=5)
-    parser.add_argument("--embedding", "-v", dest="embedding_size", type=int, default=300)
-    parser.add_argument("--layer_size", "-l", dest="layer_size", type=int, default=200)
-    args = parser.parse_args()
-    print(args)
-    return args
-
-
 if __name__ == "__main__":
-    args = parse_args()
-    exit()
-    num_epochs = 5
+    num_epochs = args.num_epochs
+    batch_size = args.batch_size
     train_sentences = 0
     train_loss = 0
-    batch_size = 16
     for epoch in range(num_epochs):
         train_sentence1, train_sentence2, train_labels = shuffle(
             train_sentence1,

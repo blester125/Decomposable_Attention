@@ -5,6 +5,8 @@
 import os
 import json
 import pickle
+import argparse
+import logging
 from collections import Counter
 
 class BuplicateFilter(object):
@@ -15,6 +17,27 @@ class BuplicateFilter(object):
         rv = record.msg not in self.msgs
         self.msgs.add(record.msg)
         return rv
+
+LOG_LEVEL_STRINGS = ['CRITICAL', 'ERROR', 'WARNING', 'INFO', 'DEBUG']
+
+def _log_level_string_to_int(log_level_string):
+    if not log_level_string in LOG_LEVEL_STRINGS:
+        message = 'invalid choice: {0} (choose from {1})'.format(log_level_string, LOG_LEVEL_STRINGS)
+        raise argparse.ArgumentTypeError(message)
+
+    log_level_int = getattr(logging, log_level_string, logging.INFO)
+    return log_level_int
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--no_cache", "-n", dest="no_cache", action="store_true")
+    parser.add_argument("--batch_size", "-b", dest="batch_size", type=int, default=16)
+    parser.add_argument("--epochs", "-e", dest="num_epochs", type=int, default=5)
+    parser.add_argument("--embedding", "-v", dest="embedding_size", type=int, default=300)
+    parser.add_argument("--layer_size", "-l", dest="layer_size", type=int, default=200)
+    parser.add_argument("--log_level", "-d", default='INFO', dest="log_level", type=_log_level_string_to_int, help='Set the logging output level. {0}'.format(LOG_LEVEL_STRINGS))
+    args = parser.parse_args()
+    return args
 
 
 class Vocab:
