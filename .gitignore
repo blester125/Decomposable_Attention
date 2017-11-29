@@ -1,0 +1,6 @@
+__pycache__
+cache
+*.tar.gz
+*.zip
+snli_1.0/
+nli_env/
