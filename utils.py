@@ -36,6 +36,9 @@ def parse_args():
     parser.add_argument("--embedding", "-v", dest="embedding_size", type=int, default=300)
     parser.add_argument("--layer_size", "-l", dest="layer_size", type=int, default=200)
     parser.add_argument("--log_level", "-d", default='INFO', dest="log_level", type=_log_level_string_to_int, help='Set the logging output level. {0}'.format(LOG_LEVEL_STRINGS))
+    parser.add_argument("--dynet-autobatch")
+    parser.add_argument("--dynet-gpu")
+    parser.add_argument("--dynet-gpus")
     args = parser.parse_args()
     return args
 

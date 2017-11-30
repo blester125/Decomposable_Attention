@@ -10,6 +10,7 @@ from itertools import chain
 from collections import Counter
 # [ -Third Party ]
 from sklearn.utils import shuffle
+import numpy as np
 import dynet as dy
 # [ -Project ]
 from utils import Vocab, read, parse_args
@@ -53,6 +54,10 @@ embedding_size = args.embedding_size
 logging.info("Embedding size: " + str(embedding_size))
 layer_size = args.layer_size
 logging.info("Layer Size: " + str(layer_size))
+batch_size = args.batch_size
+logging.info("Batch Size: " + str(batch_size))
+num_epochs = args.num_epochs
+logging.info("Num Epochs: " + str(num_epochs))
 
 model = dy.ParameterCollection()
 trainer = dy.AdamTrainer(model)
@@ -150,7 +155,7 @@ def aggregate(sentence_a, sentence_b):
     return logits
 
 
-def calc_loss(sentence_a, sentence_b, label):
+def forward_prop(sentence_a, sentence_b):
 
     logging.debug("la: " + str(len(sentence1)))
     logging.debug("lb: " + str(len(sentence2)))
@@ -181,15 +186,17 @@ def calc_loss(sentence_a, sentence_b, label):
     logits = aggregate(sentence_a_combine, sentence_b_combine)
     logging.debug("Logits shape: " + str(logits.dim()))
 
-    encoded_label = label_vocab[label]
+    return logits
 
+
+def calc_loss(sentence_a, sentence_b, label):
+    logits = forward_prop(sentence_a, sentence_b)
+    encoded_label = label_vocab[label]
     loss = dy.pickneglogsoftmax(logits, encoded_label)
     return loss
 
 
 if __name__ == "__main__":
-    num_epochs = args.num_epochs
-    batch_size = args.batch_size
     train_sentences = 0
     train_loss = 0
     for epoch in range(num_epochs):
@@ -241,3 +248,12 @@ if __name__ == "__main__":
     total_test_loss = dy.esum(test_losses) / len(test_sentence1)
     test_loss = total_test_loss.scalar_value()
     print("Test Loss: {:.4f}".format(test_loss))
+    correct = 0
+    total = 0
+    dy.renew_cg()
+    for test_1, test_2, test_label in zip(test_sentence1, test_sentence2, test_labels):
+        pred = np.argmax(forward_prop(test_1, test_2).tensor_value())
+        if pred == label_vocab[test_label]:
+            correct += 1
+        total += 1
+    print("Test Accuracy: {:.2f}".format(correct / total))
