@@ -248,12 +248,16 @@ if __name__ == "__main__":
     total_test_loss = dy.esum(test_losses) / len(test_sentence1)
     test_loss = total_test_loss.scalar_value()
     print("Test Loss: {:.4f}".format(test_loss))
-    correct = 0
-    total = 0
+    preds_exp = []
     dy.renew_cg()
     for test_1, test_2, test_label in zip(test_sentence1, test_sentence2, test_labels):
-        pred = np.argmax(forward_prop(test_1, test_2).tensor_value())
-        if pred == label_vocab[test_label]:
+        preds_exp.append(forward_prop(test_1, test_2))
+    preds = dy.concatenate(preds_exp, d=1).npvalue()
+    preds = np.argmax(preds, axis=0)
+    correct = 0
+    total = 0
+    for pred, label in zip(preds, test_labels):
+        if pred == label_vocab[label]:
             correct += 1
         total += 1
-    print("Test Accuracy: {:.2f}".format(correct / total))
+    print("Test Accuracy: {:.2f}".format((correct / total) * 100))
